@@ -1,0 +1,312 @@
+_SECTION_BEGIN("Trading System");
+
+_N(Title=StrFormat("{{NAME}}-{{INTERVAL}} {{DATE}} open %g,Hi %g,Lo %g,close %g(%.1f%%){{VALUES}}",O,H,L,C, SelectedValue(ROC(C,1))));
+SetChartOptions(0,chartShowArrows|chartShowDates);//Enable Date/Time Axis
+
+Plot( C, "Close", colorDefault, styleNoTitle | GetPriceStyle() );//plotting candle chart
+
+_SECTION_END();
+
+
+
+_SECTION_BEGIN("EMA Crossover");
+
+EMA1=Param("EMA-1",20,0,100,1);
+EMA2=Param("EMA-2",50,0,200,1);
+PORP=ParamToggle("Percentage or Point","Percentage|Point",0);
+TG = Param("Target ", 1, 0.05, 100, 0.05);
+SL = Param("StopLoss", 1, 0.05, 100, 0.05);
+MinSpread = Param("Minimum Spread",0.05,0.001,10,0.001);
+line = ParamToggle("Plot Line", "OFF|ON");
+
+_SECTION_END();
+
+_SECTION_BEGIN( "Market Setting" );
+IM = ParamToggle( "Intraday Mode", "Off|On", 1 );
+TradeStartTime = Param( "Trade Start From(HHMM)", 915, 600, 2400, 1 );
+NoEntryTime = Param( "No Entry After(HHMM)", 1445, 900, 2400, 1 );
+ExitTime = Param( "Square Off Time(HHMM)", 1515, 900, 2400, 1 );
+MinSpread = Param("Minimum Spread", 0.05, 0.001, 10, 0.001);
+
+_SECTION_END();
+
+_SECTION_BEGIN( "Display Setting" );
+
+MessageBox = ParamToggle( "Message Box", "Hide|Show", 1 );
+
+_SECTION_END();
+
+
+
+////////////////////////////////////////
+
+FC = DateNum() != Ref( DateNum(), -1 );
+LC = DateNum() != Ref( DateNum(), 1 );
+EntryTime = IIf(IM, TimeNum()>=TradeStartTime*100 AND TimeNum()<NoEntryTime*100, 1);
+MarketClose = IIf(IM, ExRem(TimeNum()>=ExitTime*100, LC), 0);
+
+
+_SECTION_BEGIN("Trading logics");
+
+
+//plotting of EMAs
+
+
+EMAA=EMA(C,EMA1);
+EMAB=EMA(C,EMA2);
+ 
+ 
+if(line)
+{ 
+Plot(EMAA,"EMA-1",colorDefault,styleLine,colorred);
+Plot(EMAB,"EMA-2",colorDefault,styleDots,colorBlue);
+}
+//when to trade-Trading logic
+PBuy = Cross(EMAA,EMAB) ;
+PShort=Cross(EMAB,EMAA);
+
+PBuy = ExRem(PBuy, PShort OR (IM AND FC));
+PShort = ExRem(PShort, PBuy OR (IM AND FC));
+
+BZ = Flip(PBuy, PShort OR (IM AND FC));
+SZ = Flip(PShort, PBuy OR (IM AND FC));
+
+
+Buy =  BZ AND EntryTime;
+Short = SZ AND EntryTime;
+
+Sell = PShort OR MarketClose;
+Cover = PBuy OR MarketClose;
+
+Buy=ExRem(Buy,Sell);
+Short=ExRem(Short,cover);
+Sell=ExRem(Sell,Buy);
+Cover=ExRem(Cover,Short);
+
+
+
+
+BuyPrice=ValueWhen(Buy,O,1 );
+ShortPrice=ValueWhen(Short,O,1);
+
+Openlong=Flip(Buy,Sell);
+Openshort=Flip(Short,Cover);
+
+
+
+if(PORP)
+{
+	BTP1=BuyPrice+TG;
+	STP1=ShortPrice-TG;
+}
+else
+{
+	BTP1=(round(BuyPrice*(1+TG/100)/MinSpread)*MinSpread);
+	STP1=(round(ShortPrice*(1-TG/100)/MinSpread)*MinSpread);
+	
+}
+
+BTPrice1 = IIf(OpenLong OR Sell,BTP1, Null);
+STPrice1 = IIf(OpenShort OR Cover,STP1, Null);
+
+if(PORP)
+{
+	BSLP=BuyPrice-SL;
+	SSLP=ShortPrice+SL;
+}
+else
+{
+	BSLP=(round(BuyPrice*(1-SL/100)/MinSpread)*MinSpread);
+	SSLP=(round(ShortPrice*(1+SL/100)/MinSpread)*MinSpread);
+}
+
+BSLPrice = IIf(OpenLong OR Sell, BSLP, Null);
+SSLPrice = IIf(OpenShort OR Cover, SSLP, Null);
+
+//////////////////////////////////////////////////////////////////
+
+TSell1 = (H>=BTPrice1) AND !IsNull(BTPrice1);
+SLSell = (L<=BSLPrice AND !Buy) AND !IsNull(BSLPrice);
+
+TCover1 = (L<=STPrice1) AND !IsNull(STPrice1);
+SLCover = (H>=SSLPrice AND !Short) AND !IsNull(SSLPrice);
+
+Sell = (Sell OR TSell1) OR SLSell ;
+Cover = (Cover OR TCover1) OR SLCover;
+
+Buy = ExRem(Buy, Sell);
+Short = ExRem(Short, Cover);
+Sell = ExRem(Sell, Buy);
+Cover = ExRem(Cover, Short);
+
+OpenLong = Flip(Buy, Sell);
+OpenShort = Flip(Short, Cover);
+
+TSell1 = (OpenLong OR Sell) AND TSell1;
+TCover1 = (OpenShort OR Cover) AND TCover1;
+SLSell = (OpenLong OR Sell) AND SLSell;
+SLCover = (OpenShort OR Cover) AND SLCover;
+
+TSell1 = ExRem(TSell1, Sell);
+SLSell = ExRem(SLSell, Sell);
+
+TCover1 = ExRem(TCover1, Cover);
+SLCover = ExRem(SLCover, Cover);
+
+BuyPrice = IIf(OpenLong OR Sell, BuyPrice, Null);
+ShortPrice = IIf(OpenShort OR Cover, ShortPrice, Null);
+BTPrice1 = IIf(OpenLong OR Sell,BTPrice1, Null);
+STPrice1 = IIf(OpenShort OR Cover,STPrice1, Null);
+BSLPrice = IIf(OpenLong OR Sell, BSLPrice, Null);
+SSLPrice = IIf(OpenShort OR Cover, SSLPrice, Null);
+
+
+
+
+
+SellPrice=IIf(Sell*SLSell,BSLPrice, IIf(Sell*TSell1,BTPrice1,IIf(Sell,Close,Null )) );
+CoverPrice=IIf(Cover*SLCover,SSLPrice,IIf(Cover*TCover1,STPrice1,IIf(Cover,Close,Null)));
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////
+
+
+PlotShapes(IIf(Buy, shapeSquare, shapeNone),colorGreen, 0, L, Offset=-40);
+PlotShapes(IIf(Buy, shapeSquare, shapeNone),colorLime, 0,L, Offset=-50);                      
+PlotShapes(IIf(Buy, shapeUpArrow, shapeNone),colorWhite, 0,L, Offset=-45); 
+PlotShapes(IIf(Short, shapeSquare, shapeNone),colorRed, 0, H, Offset=40);
+PlotShapes(IIf(Short, shapeSquare, shapeNone),colorOrange, 0,H, Offset=50);                      
+PlotShapes(IIf(Short, shapeDownArrow, shapeNone),colorWhite, 0,H, Offset=-45);
+
+
+PlotShapes(IIf(Cover, shapeUpTriangle, shapeNone),colorCustom7, 0,L, Offset=-20);                      
+PlotShapes(IIf(Sell, shapeDownTriangle, shapeNone),colorCustom12, 0,H, Offset=-20);
+
+Plot(BuyPrice, "Buy Price", colorBrightGreen, styleLine|styleNoTitle|styleNoLabel);
+Plot(ShortPrice, "Short Price", colorRed, styleLine|styleNoTitle|styleNoLabel);
+
+
+PlotShapes(TSell1*shapeStar, colorBrightGreen, 0, H, 10, 0);
+PlotShapes(TCover1*shapeStar, colorRed, 0, L, -10, 0);
+
+PlotShapes(SLSell*shapeStar, colorBlue, 0, L, -20, 0);
+PlotShapes(SLCover*shapeStar, colorYellow, 0, H, 20, 0);
+
+
+
+Plot(BTPrice1, "BuyTargetPrice", colorGreen, styleLine|styleThick|styleDashed|styleNoTitle);
+Plot(STPrice1, "ShortTargetPrice", colorRed, styleLine|styleThick|styleDashed|styleNoTitle);
+
+Plot(BSLPrice, "BuySLPrice", colorLightOrange, styleLine|styleDashed|styleNoTitle);
+Plot(SSLPrice, "ShortSLPrice", colorLightOrange, styleLine|styleDashed|styleNoTitle);
+
+
+
+_SECTION_END();
+
+
+//Exploration
+_SECTION_BEGIN("Explore");
+
+Filter = Buy OR Short ;
+
+AddColumn(IIf(Buy, BuyPrice, Null), "Buy", 1.2, colorWhite, colorDarkGreen, 115);
+AddColumn(IIf(Short, ShortPrice, Null), "Short", 1.2, colorWhite, colorDarkRed, 115);
+AddColumn(Close,"LTP",1.2);
+
+ _SECTION_END();
+
+
+if ( MessageBox )
+{
+	
+		
+    GfxSelectFont( "Arial", 9, 100 );
+    GfxSetBkMode( 1 );
+    GfxSetTextColor( colorWhite );
+
+    if ( SelectedValue( OpenLong ) == 1 )
+    {
+        GfxSelectSolidBrush( colorDarkGreen );
+    }
+	
+	else if ( SelectedValue( OpenShort ) == 1 )
+	{
+		GfxSelectSolidBrush( colorDarkRed );
+	}
+	
+	else
+	{
+		GfxSelectSolidBrush( colorDarkGrey );
+	}
+
+    pxHeight = Status( "pxchartheight" ) ;
+    pxWidth = Status( "pxchartwidth" );
+    
+    boxWid = 250;
+    boxHet = 150;
+    
+    x1 = 5;
+    y1 = pxHeight - boxHet;
+    
+    x2 = x1 + boxWid;
+    y2 = pxHeight;
+    
+    sp = 18;
+    DP = 1.2;
+    
+    Relax = !OpenLong AND !OpenShort AND !Sell AND !Cover;    
+    	
+    GfxSelectPen( colorBlue, 1 );
+    GfxRoundRect( x1, y1, x2, y2 , 10, 10 ) ;
+
+    BT1A = Flip(TSell1, Sell);
+	
+	ST1A = Flip(TCover1, Cover);
+	
+    GfxSelectFont( "Arial", 11, 1000 );
+    GfxTextOut( WriteIf( OpenLong, "Buy @ " + WriteVal( BuyPrice, DP ), "" ) + WriteIf( OpenShort, "Short @ " + WriteVal( ShortPrice, DP ), "" ), 80, y2 - boxHet + sp );
+    GfxTextOut( WriteIf( Sell, "Sold @ " + WriteVal ( SellPrice, DP ), "") + WriteIf ( Cover, "Cover @ " + WriteVal (CoverPrice, DP ), ""), 80, y2 - boxHet + 2*sp );
+    GfxTextOut( WriteIf (Relax, "No Trade Zone - Relax!",""), 110, y2 - boxHet + sp);
+    GfxTextOut( WriteIf (OpenLong OR OpenShort, "StopLoss: "+WriteVal(IIf(OpenLong, BSLPrice ,IIf(OpenShort, SSLPrice, Null)), 1.2), ""), 90, y2 - boxHet + 3*sp);
+    GfxTextOut( WriteIf (OpenLong OR OpenShort, "Target: "+WriteVal(IIf(OpenLong, BTPrice1, IIf(OpenShort, STPrice1, Null)), DP), "") , 75, y2 - boxHet + 4*sp); 	 
+    
+    }
+
+
+
+_SECTION_BEGIN("BackTest Settings");
+BTMODE = ParamList("Backtest Mode", "Normal|Fixed Qauntity|Fixed Exposure");
+RoundLotSize = Param("LotSize", 25, 1, 10000, 1);
+QTY = Param("Qauntity/Lots", 1, 1, 10000, 1);
+TickSize = 0.05;
+INEQ = Param( "Initial Equity", 1000000, 0, 1000000, 1 );
+AM = Param( "Account Margin", 0.2, 0, 1, 0.05 );
+EXPO = INEQ/(AM);// 
+CAMN = Param("Brokerage", 0.02, 0, 1, 0.01);
+_SECTION_END();
+
+if( Status( "action" ) == actionBacktest )
+{
+    SetOption( "InitialEquity", INEQ );
+    SetOption( "AccountMargin", AM );
+    SetOption( "MinShares", 1 );
+    SetOption( "PriceBoundChecking", True );
+    SetOption( "CommissionMode", 1 );
+    SetOption( "CommissionAmount", CAMN );
+    
+    if(BTMODE=="Normal")
+    SetPositionSize( 100/AM, spsPercentOfEquity );
+    
+    else if(BTMODE=="Fixed Qauntity")
+    SetPositionSize( QTY*RoundLotSize, spsShares );
+    
+    else if(BTMODE=="Fixed Exposure")
+    SetPositionSize( INEQ/AM, spsValue );
+}
+
+
+
+
